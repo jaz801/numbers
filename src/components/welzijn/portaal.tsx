@@ -25,9 +25,11 @@ import {
   VRAGEN,
   init,
   tokenize,
+  vraagVanRij,
   type Vraag,
 } from "./data";
-import { DEMO_PEOPLE, type Persoon } from "./people";
+import { DEMO_PEOPLE, persoonVanRij, type Persoon } from "./people";
+import type { Person, Question } from "@/lib/db";
 import { hoverCss, renderView } from "./portaal-view";
 
 type Props = {
@@ -68,7 +70,9 @@ export default class WelzijnPortaal extends Component<Props, State> {
     drempel: this.props.demoDrempel || 2,
     uitVragen: [],
     eigenVragen: [],
-    nieuwVraag: "", nieuwVraagThema: "WD",
+    nieuwVraag: "", nieuwVraagThema: "WD", vraagMelding: "",
+    /** null while the first load is still out. False = no database behind us. */
+    dbLive: null,
     invites: {},
     verzonden: false, verzendBezig: false,
     gekopieerd: null,
@@ -87,6 +91,61 @@ export default class WelzijnPortaal extends Component<Props, State> {
     insights: null, insightsBezig: false,
     exportLabel: "Exporteer CSV"
   };
+
+  componentDidMount() {
+    this.laadUitDb();
+  }
+
+  /**
+   * Fill the portal from Supabase. Without the service-role key the routes
+   * answer 503 and the demo content stays on screen — a laptop with no
+   * secrets still has to be able to run the demo, it just cannot save.
+   */
+  laadUitDb = async () => {
+    try {
+      const [mensen, vragen] = await Promise.all([
+        fetch("/api/people").then(r => r.json().then((b: any) => ({ ok: r.ok, b }))),
+        fetch("/api/questions").then(r => r.json().then((b: any) => ({ ok: r.ok, b })))
+      ]);
+      if (!mensen.ok || !vragen.ok) throw new Error(mensen.b?.error || vragen.b?.error);
+      const people = (mensen.b.people as Person[]).map(persoonVanRij);
+      const uitDb = (vragen.b.questions as Question[]).map(vraagVanRij);
+      // The demo audience stays on screen next to what the database holds, so
+      // adding one person never makes the other three disappear. Matching is
+      // on e-mail, which is what np_people is unique on.
+      const demo = DEMO_PEOPLE.filter(
+        d => !people.some(p => p.email.toLowerCase() === d.email.toLowerCase())
+      );
+      this.setState(() => ({
+        dbLive: true,
+        people: demo.concat(people),
+        // Anything the built-in pool already carries is the same question.
+        eigenVragen: uitDb.filter(v => !VRAGEN.some(b => b.id === v.id))
+      }));
+    } catch (e: any) {
+      this.setState({
+        dbLive: false,
+        formMelding: "Geen databaseverbinding: wat je toevoegt blijft in dit scherm en is na verversen weg." +
+          (e && e.message ? " (" + e.message + ")" : "")
+      });
+    }
+  };
+
+  /** POST helper that hands back the row, or the message to put on screen. */
+  async bewaar<T>(pad: string, body: unknown): Promise<{ rij?: T; fout?: string }> {
+    try {
+      const res = await fetch(pad, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const uit = await res.json();
+      if (!res.ok) return { fout: uit.error || "Opslaan mislukt." };
+      return { rij: uit as T };
+    } catch {
+      return { fout: "Opslaan mislukt: de server was niet bereikbaar." };
+    }
+  }
 
   actieveVragen() {
     const alle = VRAGEN.concat(this.state.eigenVragen);
@@ -325,20 +384,73 @@ export default class WelzijnPortaal extends Component<Props, State> {
     return aantal >= this.state.drempel ? this.fmt(n) : "n<" + this.state.drempel;
   }
 
-  voegToe = () => {
-    const { nieuwNaam, nieuwEmail } = this.state;
-    if (!nieuwNaam.trim() || !nieuwEmail.includes("@")) {
+  voegToe = async () => {
+    const { nieuwNaam, nieuwEmail, nieuwType, nieuwFoto, nieuwContext } = this.state;
+    const naam = nieuwNaam.trim();
+    const email = nieuwEmail.trim();
+    if (!naam || !email.includes("@")) {
       this.setState({ formMelding: "Vul een naam en een geldig e-mailadres in." });
       return;
     }
-    const p = {
-      id: "p" + Date.now(), naam: nieuwNaam.trim(), email: nieuwEmail.trim(),
-      type: this.state.nieuwType, foto: this.state.nieuwFoto, context: this.state.nieuwContext
+    if (this.state.people.some((p: Persoon) => p.email.toLowerCase() === email.toLowerCase())) {
+      this.setState({ formMelding: email + " staat al in de lijst." });
+      return;
+    }
+
+    let p: Persoon = {
+      id: "p" + Date.now(), naam, email,
+      type: nieuwType, foto: nieuwFoto, context: nieuwContext
     };
+    let staart = " staat erbij. Verstuur de pulse om een link te krijgen.";
+
+    if (this.state.dbLive === false) {
+      staart = " staat erbij, maar alleen in dit scherm — er is geen databaseverbinding.";
+    } else {
+      this.setState({ formMelding: "Opslaan…" });
+      const uit = await this.bewaar<{ person: Person }>("/api/people", {
+        naam, email, type: nieuwType, foto: nieuwFoto, context: nieuwContext
+      });
+      if (uit.fout || !uit.rij) {
+        this.setState({ formMelding: uit.fout || "Opslaan mislukt." });
+        return;
+      }
+      p = persoonVanRij(uit.rij.person);
+      staart = " is opgeslagen. Verstuur de pulse om een link te krijgen.";
+    }
+
     this.setState((s: any) => ({
       people: s.people.concat([p]),
       nieuwNaam: "", nieuwEmail: "", nieuwFoto: null,
-      formMelding: p.naam.split(" ")[0] + " staat erbij. Verstuur de pulse om een link te krijgen."
+      formMelding: p.naam.split(" ")[0] + staart
+    }));
+  };
+
+  voegVraagToe = async () => {
+    const tekst = this.state.nieuwVraag.trim();
+    const thema = this.state.nieuwVraagThema;
+    if (!tekst) {
+      this.setState({ vraagMelding: "Typ eerst een vraag." });
+      return;
+    }
+
+    let vraag: Vraag = { id: thema + "9" + (this.state.eigenVragen.length + 1), t: thema, kern: false, tekst };
+    let melding = "De vraag staat in de pool, maar alleen in dit scherm — er is geen databaseverbinding.";
+
+    if (this.state.dbLive !== false) {
+      this.setState({ vraagMelding: "Opslaan…" });
+      const uit = await this.bewaar<{ question: Question }>("/api/questions", { tekst, thema });
+      if (uit.fout || !uit.rij) {
+        this.setState({ vraagMelding: uit.fout || "Opslaan mislukt." });
+        return;
+      }
+      vraag = vraagVanRij(uit.rij.question);
+      melding = vraag.id + " is opgeslagen en telt vanaf de volgende verzending mee.";
+    }
+
+    this.setState((s: any) => ({
+      eigenVragen: s.eigenVragen.concat([vraag]),
+      nieuwVraag: "",
+      vraagMelding: melding
     }));
   };
 
@@ -666,14 +778,9 @@ export default class WelzijnPortaal extends Component<Props, State> {
       nieuwVraag: s.nieuwVraag, nieuwVraagThema: s.nieuwVraagThema,
       setVraag: (e: any) => this.setState({ nieuwVraag: e.target.value }),
       setVraagThema: (e: any) => this.setState({ nieuwVraagThema: e.target.value }),
-      voegVraagToe: () => {
-        if (!s.nieuwVraag.trim()) return;
-        const id = s.nieuwVraagThema + "9" + (s.eigenVragen.length + 1);
-        this.setState((st: any) => ({
-          eigenVragen: st.eigenVragen.concat([{ id, t: st.nieuwVraagThema, kern: false, tekst: st.nieuwVraag.trim() }]),
-          nieuwVraag: ""
-        }));
-      },
+      voegVraagToe: this.voegVraagToe,
+      vraagMelding: s.vraagMelding,
+      heeftVraagMelding: !!s.vraagMelding,
 
       pulseTitel: "Welzijnspulse · augustus",
       pulseNaam: invPerson ? invPerson.naam.split(" ")[0] : "daar",
