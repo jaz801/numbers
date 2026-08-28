@@ -262,6 +262,14 @@ no worker — a cron-triggered route is the right size.
 ### OpenRouter specifics
 - `OPENROUTER_API_KEY`, models pinned per stage in env
   (`OPENROUTER_MODEL_CODER` / `_SYNTH` / `_CRITIC`) — never "latest".
+- Current pick for all three stages: **`gpt-5.6-terra`** with
+  `reasoning: { effort: "medium" }`. Enough for coding one Dutch sentence and
+  for weighing a stats table, without paying high-effort latency on a job that
+  runs a dozen times a month. Verify the exact slug against OpenRouter's model
+  list before wiring it up.
+- Reasoning effort is part of the pinned identity: it is stored in
+  `np_llm_runs` next to the model id, and changing it re-triggers the golden
+  set exactly as a model swap does (#10).
 - `temperature: 0`, `response_format: { type: "json_schema", strict: true }`.
 - `provider: { require_parameters: true, allow_fallbacks: false, data_collection: "deny" }`
   — a silent fallback to a provider that ignores the schema, or that retains
