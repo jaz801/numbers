@@ -6,7 +6,8 @@ export type Persoon = {
   email: string;
   /** Which segment the answer counts towards. */
   type: "intern" | "extern";
-  /** Data URL of an uploaded photo; the portal falls back to initials. */
+  /** Photo URL, or a data URL for one uploaded in the portal itself.
+   *  Falls back to an initials circle when there is none. */
   foto: string | null;
   /** Key into CONTEXTEN — steers how the scores are read, never who sees them. */
   context: string;
@@ -51,6 +52,6 @@ export const DEMO_PEOPLE: Persoon[] = audience.map((member, i) => ({
   naam: member.name,
   email: member.email,
   type: SEGMENT_PER_LID[member.id] ?? "intern",
-  foto: null,
+  foto: member.avatarUrl ?? null,
   context: contextVan(member),
 }));
