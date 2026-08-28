@@ -1,15 +1,22 @@
 /**
- * POST /api/pulse/test — send the pulse invitations to yourself.
+ * /api/pulse/test — send the pulse invitations to yourself.
  *
  * Exists so a test send can run on Vercel, where MAILEROO_API_KEY already
  * lives: nobody has to copy the key onto a laptop to see the mail land.
  *
  * Two guards, because a route that sends mail on request is a spam relay
  * waiting to happen:
- *  - `x-pulse-secret` must match PULSE_TEST_SECRET; without that env var set
- *    the route refuses to do anything at all.
+ *  - the secret must match PULSE_TEST_SECRET; without that env var set the
+ *    route refuses to do anything at all.
  *  - the recipient must already be in the demo audience. No arbitrary
  *    addresses, whoever holds the secret.
+ *
+ * POST is the real interface: `x-pulse-secret` header, JSON body. GET does
+ * the same with `?secret=&email=&kinds=`, so the test can also be fired from
+ * a browser or a tool that only speaks GET. A GET that sends mail is a
+ * deliberate compromise for a test route: the secret ends up in access logs
+ * and browser history, so rotate PULSE_TEST_SECRET when the test is done and
+ * drop this route before anything real depends on it.
  */
 
 import { timingSafeEqual } from "node:crypto";
@@ -25,7 +32,9 @@ function secretMatches(provided: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export async function POST(request: Request) {
+type SendInput = { email?: string; kinds?: PulseKind[] };
+
+async function handle(request: Request, provided: string, input: SendInput) {
   const secret = process.env.PULSE_TEST_SECRET;
   const apiKey = process.env.MAILEROO_API_KEY;
   const from = process.env.MAILEROO_FROM;
@@ -37,9 +46,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const provided = request.headers.get("x-pulse-secret") ?? "";
   if (!secretMatches(provided, secret)) {
-    return Response.json({ error: "Onjuist of ontbrekend x-pulse-secret." }, { status: 401 });
+    return Response.json({ error: "Onjuist of ontbrekend pulse-secret." }, { status: 401 });
   }
 
   if (!apiKey || !from) {
@@ -49,14 +57,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { email?: string; kinds?: PulseKind[] } = {};
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    // An empty body is fine: it falls back to the whole demo default below.
-  }
-
-  const email = (body.email ?? audience[0]!.email).trim().toLowerCase();
+  const email = (input.email ?? audience[0]!.email).trim().toLowerCase();
   const member = audience.find((person) => person.email.toLowerCase() === email);
   if (!member) {
     return Response.json(
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const kinds: PulseKind[] = body.kinds?.length ? body.kinds : ["flits", "diepte"];
+  const kinds: PulseKind[] = input.kinds?.length ? input.kinds : ["flits", "diepte"];
   const invalid = kinds.filter((kind) => kind !== "flits" && kind !== "diepte");
   if (invalid.length) {
     return Response.json(
@@ -101,4 +102,28 @@ export async function POST(request: Request) {
   }
 
   return Response.json({ to: member.email, sent });
+}
+
+export async function POST(request: Request) {
+  let body: SendInput = {};
+  try {
+    body = (await request.json()) as SendInput;
+  } catch {
+    // An empty body is fine: it falls back to the demo defaults.
+  }
+  return handle(request, request.headers.get("x-pulse-secret") ?? "", body);
+}
+
+export async function GET(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const kinds = params
+    .get("kinds")
+    ?.split(",")
+    .map((kind) => kind.trim())
+    .filter(Boolean) as PulseKind[] | undefined;
+
+  return handle(request, params.get("secret") ?? "", {
+    email: params.get("email") ?? undefined,
+    kinds,
+  });
 }
