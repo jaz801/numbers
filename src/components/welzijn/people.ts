@@ -1,4 +1,5 @@
 import { audience, type AudienceMember } from "@/data/audience";
+import { AVATARS } from "./avatars";
 
 export type Persoon = {
   id: string;
@@ -52,6 +53,6 @@ export const DEMO_PEOPLE: Persoon[] = audience.map((member, i) => ({
   naam: member.name,
   email: member.email,
   type: SEGMENT_PER_LID[member.id] ?? "intern",
-  foto: member.avatarUrl ?? null,
+  foto: AVATARS[member.id] ?? member.avatarUrl ?? null,
   context: contextVan(member),
 }));

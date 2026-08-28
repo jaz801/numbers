@@ -3,10 +3,10 @@
 import { Fragment } from "react";
 import { css } from "./css";
 
-export const hoverCss = `.hv1:hover{background:#27CFC3}
-.hv2:hover{border-color:#00B0A8;color:#00857f}
-.hv3:hover{background:#f7b587}
-.hv4:hover{color:#8a4b1f}`;
+export const hoverCss = `.hv1:hover{background:#27CFC3 !important}
+.hv2:hover{border-color:#00B0A8 !important;color:#00857f !important}
+.hv3:hover{background:#f7b587 !important}
+.hv4:hover{color:#8a4b1f !important}`;
 
 export function renderView(B: any) {
   return (
@@ -507,8 +507,8 @@ export function renderView(B: any) {
                                       <span style={css(i.urgStyle)}>{i.urgentie}</span>
                                       <span style={css("color:#fff;font-size:15.5px;font-weight:600")}>{i.kop}</span>
                                     </div>
-                                    <p style={css("color:#a5a5a5;font-size:13.5px;line-height:1.55;margin:0 0 8px")}><span style={css("color:#7fd6d0")}>Bewijs ·</span>{i.bewijs}</p>
-                                    <p style={css("color:#e4e4e4;font-size:13.5px;line-height:1.55;margin:0")}><span style={css("color:#F5A46C")}>Actie ·</span>{i.actie}</p>
+                                    <p style={css("color:#a5a5a5;font-size:13.5px;line-height:1.55;margin:0 0 8px")}><span style={css("color:#7fd6d0")}>Bewijs · </span>{i.bewijs}</p>
+                                    <p style={css("color:#e4e4e4;font-size:13.5px;line-height:1.55;margin:0")}><span style={css("color:#F5A46C")}>Actie · </span>{i.actie}</p>
                                   </div>
                                 </Fragment>
                               ))}
