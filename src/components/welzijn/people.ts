@@ -1,4 +1,6 @@
-import { audience, type AudienceMember } from "@/data/audience";
+import { audience } from "@/data/audience";
+import { contextVanLabels } from "@/lib/np/context";
+import type { Person } from "@/lib/db";
 import { AVATARS } from "./avatars";
 
 export type Persoon = {
@@ -15,18 +17,6 @@ export type Persoon = {
 };
 
 /**
- * The portal reads a context profile per person. Only what someone declared
- * about themselves gets mapped here; nothing is inferred from their answers.
- */
-const CONTEXT_PER_LABEL: Record<string, string> = {
-  autisme: "autisme",
-  hoogbegaafd: "autisme",
-  adhd: "adhd",
-  manisch: "bipolair",
-  bipolair: "bipolair",
-};
-
-/**
  * Intern or extern per person. Not part of the audience record itself — it is
  * a property of this pulse, not of the person.
  */
@@ -35,14 +25,6 @@ const SEGMENT_PER_LID: Record<string, "intern" | "extern"> = {
   joep: "intern",
   kian: "extern",
 };
-
-function contextVan(member: AudienceMember): string {
-  for (const label of member.labels ?? []) {
-    const context = CONTEXT_PER_LABEL[label];
-    if (context) return context;
-  }
-  return "geen";
-}
 
 /**
  * The demo audience as the portal wants it. Ids stay p1/p2/p3 because the
@@ -54,5 +36,26 @@ export const DEMO_PEOPLE: Persoon[] = audience.map((member, i) => ({
   email: member.email,
   type: SEGMENT_PER_LID[member.id] ?? "intern",
   foto: AVATARS[member.id] ?? member.avatarUrl ?? null,
-  context: contextVan(member),
+  context: contextVanLabels(member.labels),
 }));
+
+/**
+ * A row from np_people as the portal wants it.
+ *
+ * Someone who is also in the demo audience keeps their p1/p2/p3 id and their
+ * inlined portrait: the example history and the seeded answers hang off those
+ * ids, and the database has no reason to carry a 30 kB data URL twice.
+ */
+export function persoonVanRij(row: Person): Persoon {
+  const demo = DEMO_PEOPLE.find(
+    (p) => p.email.toLowerCase() === row.email.toLowerCase(),
+  );
+  return {
+    id: demo ? demo.id : row.id,
+    naam: row.name,
+    email: row.email,
+    type: row.member_type,
+    foto: row.avatar ?? demo?.foto ?? null,
+    context: contextVanLabels(row.labels),
+  };
+}
