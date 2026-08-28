@@ -36,18 +36,18 @@ export const audience: AudienceMember[] = [
     labels: ["autisme", "hoogbegaafd"],
   },
   {
-    id: "kian",
-    name: "Kian Horsmeier",
-    firstName: "Kian",
-    email: "kian@uppr.online",
-    labels: ["manisch"],
-  },
-  {
     id: "joep",
     name: "Joep Baks",
     firstName: "Joep",
     email: "joep@uppr.online",
     labels: ["adhd"],
+  },
+  {
+    id: "kian",
+    name: "Kian Horsmeier",
+    firstName: "Kian",
+    email: "kian@uppr.online",
+    labels: ["manisch"],
   },
 ];
 
