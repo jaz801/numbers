@@ -80,6 +80,12 @@ This is what gets tracked over time. Raw means are still stored, but never
 plotted across pulses — they are not comparable.
 
 ### A3. Reporting a level
+
+**At prototype scale, report counts.** With four or five responses, "75%" is a
+lie of precision — it is three people. Below `threshold_n` the dashboard says
+*"3 van de 4 gaven een 4 of 5"* and shows the four dots. Percentages, means and
+intervals switch on when n crosses the threshold; the same computation, a
+different rendering.
 - **Top-2-box** `% score ∈ {4,5}` and **bottom-2-box** `% ∈ {1,2}`, plus the
   full 1–5 distribution. This is what a manager should read: the mean of an
   ordinal 4-item scale is a convenience, not a measurement.
@@ -125,70 +131,146 @@ row. That id is the only thing an insight is allowed to cite.
 
 ---
 
-## 4. Layer B — open text, coded (OpenRouter)
+## 4. Layer B — the read call (OpenRouter)
 
-One call per open text. Input: the text alone. Output (strict json_schema):
+**One call per pulse, not one per response.** At 4–5 responses a fan-out costs
+five round trips to interpret what fits on half a screen. The whole round's open
+texts go into a single call.
+
+Two prompt/schema variants, because the two instruments are not the same object:
+
+| | `flits` | `diepte` |
+|---|---|---|
+| Input | 4 scored items + 1 open text per person | 11 scored items + 1 open text per person |
+| Themes covered | whatever was drawn | all four |
+| Insight ceiling | 2 | 4 |
+| Cross-theme claims | not allowed | allowed |
+
+What the call receives: the open texts, in a seeded shuffle, each with a local
+index. **Not** the scores, not names, not segment, not labels, not prior
+insights. Withholding the scores is the point — a model that sees a 2 next to a
+sentence will find the sentence negative.
+
+Output per text (strict json_schema):
 
 ```json
-{ "themes": [{ "code": "WERKDRUK", "span": "<verbatim substring>",
-               "polarity": -1, "confidence": 0.0 }],
-  "bevat_persoonsgegevens": true,
-  "signaal": "geen" }        // geen | zorg | integriteit
+{ "codes": [{ "i": 0, "code": "WERKDRUK", "span": "<verbatim substring>",
+              "polarity": -1 }],
+  "bevat_persoonsgegevens": [true, false, ...],
+  "signaal": [{ "i": 2, "type": "zorg" }] }
 ```
 
-- Codes come from a **fixed taxonomy** (~18 codes under the 4 themes + `overig`).
-  A free-form theme list would drift every month and destroy comparability.
-- `span` must be an **exact substring** of the input. Verified in code. Any
-  miss → one retry → then parked for human review. This is the cheapest
-  hallucination guard available.
-- `bevat_persoonsgegevens` gates whether the text may ever be quoted.
-- `signaal: zorg | integriteit` is routed **out** of the aggregate to the pulse
-  owner as a single confidential notice, exactly as the mail promises. It never
-  becomes a dashboard insight, and — because the round is anonymous — it comes
-  with the honest note that the sender cannot be contacted directly.
+- Codes come from a **fixed taxonomy** of ~18 entries. Free-form themes would
+  drift every month and destroy comparability.
+- Every `span` must be an exact substring of **the text at index `i`**, not of
+  the batch. Verified in code. Batching makes cross-attribution a real failure
+  mode — this check is what catches it. Any miss retries once, then parks the
+  round for human review.
+- `signaal: zorg | integriteit` routes **out** of the aggregate to the pulse
+  owner as one confidential notice, exactly as the mail promises — never a
+  dashboard card, and with the honest note that an anonymous sender cannot be
+  contacted back.
 
-Code counts below `threshold_n` are not reported and not passed on.
+## 5. Layer C — the insight call
 
----
+The second and last call. **Input:** the `np_metrics` rows with their evidence
+class, the code counts, the response rate, and what was promised in previous
+rounds. Plus the verbatims that passed the privacy gate — at this size the
+model may as well see the five sentences it already coded. **Not** names, not
+labels, not suppressed cells.
 
-## 5. Layer C — insights, grounded and checked
-
-**Input:** the `np_metrics` rows (with `stat_id`, `signaal|ruis|fragiel`), the
-above-threshold code counts, the response rate, and the log of actions promised
-in previous rounds. **Not** the raw texts, **not** names, **not** labels.
-
-**Output:** 3–5 items matching the existing `np_insights` shape
-(`{ kop, bewijs, actie, urgentie }`) plus a `stat_id`.
+**Output:** two to four items in the shape `np_insights` already stores —
+`{ kop, bewijs, actie, urgentie }` — plus the `stat_id` the claim rests on.
 
 **Validator (deterministic, TS):**
 - every numeral in `bewijs` must resolve to a value in the input stats;
 - `stat_id` must exist and must not be a suppressed cell;
 - `urgentie` capped by evidence class: `ruis` → max `laag`, `fragiel` → max
   `midden`;
-- an insight about a theme with no `signaal` row is rejected.
+- at `n < threshold_n` the cap is `laag` for everything, full stop.
 
 One repair round with the validator error appended; then dropped.
 
-**Critic pass:** a second, cheap call whose only job is to argue the insight is
-noise, given the same stats. Returns `{ houdbaar, reden }`. Only survivors are
-stored. Rejected insights are kept in the audit table — the pattern of what gets
-rejected is itself worth reading.
+**No separate critic call in the prototype.** It was there to stop urgency
+inflation, and at this n the deterministic gate already does that — with four
+responses nothing can reach `signaal`, so nothing can be urgent. The critic
+comes back when volume makes the gate loose enough to need it.
 
-**Quotes:** one verbatim, only if the round has `≥ threshold_n` responses, only
-from a text with `bevat_persoonsgegevens: false`, and only after a
-re-identification check (does it name a role, a client, a date?). At n = 12 in
-one office, "de nieuwe collega bij debiteuren" is a name.
+**Quotes** stay gated: only above `threshold_n` responses, only from a text
+flagged free of personal data, and only after a re-identification check. In one
+office of twelve, "de nieuwe collega bij debiteuren" is a name.
 
+### What this costs
+Two calls per round. Not two per response, not two per theme — two.
 ---
 
-## 6. Schema additions
+## 6. Live tijdens de ronde (MVP)
+
+The dashboard updates as each person submits, and the answers that come in are
+shown, so it is visible that this is real and now — not a nightly batch.
+
+### What fires when
+On every submit:
+1. **Layer A recomputes immediately.** Pure functions over a handful of rows —
+   sub-millisecond, no reason to defer it.
+2. **The two calls re-fire, debounced ~2 s**, so three people submitting in one
+   minute cost one re-read, not three. Five responses over a round is at most
+   ~10 model calls; at this size that is cents.
+3. The new insight set is written as a **new version**, not an overwrite.
+
+### The version trail is the demo
+`np_insight_versions (pulse_id, n_responses, insights, generated_at)` — one row
+per recompute. The dashboard shows the current insight card plus what changed
+since the previous response landed:
+
+> **na antwoord 3 van 4** · "Werkdruk piekt" → urgentie `midden` → `laag`
+> · one insight dropped, evidence no longer held
+
+Two things fall out of this, and the second is the more valuable:
+
+- It makes "real-time" legible instead of merely flickering. A number that
+  changes is noise; a number that changes *with a reason attached* is a product.
+- **It demonstrates the noise gate rather than explaining it.** Watching an
+  insight swing hard between n = 2 and n = 3 is the most persuasive possible
+  argument for why n = 4 cannot carry an urgent conclusion. Do not hide the
+  swing — narrate it.
+
+### The showcase feed
+A `binnengekomen` column: each response appears the moment it lands, with its
+timestamp, its scores as a row of dots, and its open text. That is the "this is
+live" signal, and it is stronger than a spinner or a pulsing dot because it is
+actual content.
+
+### Transport
+Poll `/api/pulse/[id]/state` every 3 s from the dashboard. No websocket, no
+`supabase-js` dependency — the app has none today and this does not earn one.
+The endpoint returns Layer A output, the current insight version, the version
+trail, and the feed. Swap to Supabase Realtime later if a round ever gets big
+enough for polling to matter.
+
+### The mode switch
+Live-plus-showcase is **demo behaviour, and the UI must say so.** One explicit
+setting, rendered on screen, never inferred:
+
+| | `demo` | `productie` |
+|---|---|---|
+| Updates | live, per response | on pulse close |
+| Feed | full answers shown | not rendered |
+| `threshold_n` | off | enforced |
+| Data | the consenting demo audience, or seeded synthetic responses | real medewerkers |
+
+The banner reads, in plain Dutch: *"Demoweergave — drempel uit, losse antwoorden
+zichtbaar. Niet gebruiken bij een echte ronde."* A demo mode that looks like the
+product is how a threshold gets quietly disabled in production six months later.
+
+## 7. Schema additions
 
 ```sql
 -- Reproducibility + cost audit for every model call.
 create table np_llm_runs (
   id uuid primary key default gen_random_uuid(),
   pulse_id uuid references np_pulses(id) on delete cascade,
-  stage text not null,              -- 'coder' | 'synth' | 'critic'
+  stage text not null,              -- 'read' | 'insight'
   model text not null, provider text,
   prompt_hash text not null, input_hash text not null,
   temperature numeric, seed integer,
@@ -217,6 +299,16 @@ create table np_open_codes (
   confidence numeric, run_id uuid references np_llm_runs(id)
 );
 
+-- One row per recompute, so the dashboard can show what a single answer changed.
+create table np_insight_versions (
+  id uuid primary key default gen_random_uuid(),
+  pulse_id uuid not null references np_pulses(id) on delete cascade,
+  n_responses int not null,
+  insights jsonb not null,
+  generated_at timestamptz not null default now(),
+  unique (pulse_id, n_responses)
+);
+
 -- Annotate known load peaks so the kwartaalafsluiting dip is not "an insight".
 create table np_events (
   id uuid primary key default gen_random_uuid(),
@@ -241,20 +333,20 @@ Plus two changes to existing tables:
 
 ---
 
-## 7. Code layout and run order
+## 8. Code layout and run order
 
 ```
 src/lib/openrouter.ts        minimal client, same spirit as maileroo.ts
 src/lib/pipeline/stats.ts    Layer A — pure functions, no I/O
-src/lib/pipeline/code.ts     Layer B — coder + span validator
-src/lib/pipeline/insights.ts Layer C — synth + validator + critic
+src/lib/pipeline/read.ts     Layer B — one call per pulse + span validator
+src/lib/pipeline/insights.ts Layer C — one call + validator
 src/lib/pipeline/run.ts      orchestration, stage-by-stage, idempotent
 src/app/api/pulse/[id]/process/route.ts   secret-guarded trigger (Vercel cron)
 ```
 
 Stages run in order and each writes its own state, so a failure resumes rather
 than restarts:
-`close pulse → A (stats) → B (code texts) → C (synth) → validate → critic → write np_insights`.
+`close pulse → A (stats) → B (read, 1 call) → C (insight, 1 call) → validate → write np_insights`.
 
 At this data volume the whole run is seconds and a handful of cents. No queue,
 no worker — a cron-triggered route is the right size.
@@ -281,7 +373,7 @@ no worker — a cron-triggered route is the right size.
 
 ---
 
-## 8. Criticism from a data analyst
+## 9. Criticism from a data analyst
 
 Read this as a hostile review of section 3–7. Each point ends with what changes.
 
@@ -301,13 +393,17 @@ top of noise. → Cold-start rule: **no mix adjustment and no trend line until a
 item has ≥ 3 observations across ≥ 2 rounds.** Until then, show levels and
 distributions only.
 
-**3. Self-consistency and a critic pass are overkill at this volume.**
-Three-vote coding on twelve open texts triples cost and latency to disambiguate
-text a human reads in ninety seconds. → Drop self-consistency. **Below ~15 open
-texts, the LLM proposes and a human confirms in the UI**; the model earns
-autonomy when the corpus is big enough for the human review to be the
-bottleneck. Keep the critic pass — it is one cheap call and it is the thing
-keeping urgency honest.
+**3. Two calls is right, and it costs you the blindness principle. Say so.**
+Fanning out per response, self-consistency voting and a separate critic call are
+all overkill on five sentences — that is settled, and §4–5 now describe one read
+call and one insight call. But batching means the coder sees all five texts
+together, so response C can colour how it reads response A: a halo the per-text
+design did not have. → **Accept it, and pay down what is cheap to pay down**:
+seeded shuffle so the order is not the submission order, scores withheld from
+the read call, spans validated against their own text rather than the batch, and
+**a human confirms the codes before they are published** while the corpus is
+this small. The model earns autonomy when human review becomes the bottleneck,
+not before.
 
 **4. Randomisation is the single biggest thing hurting you, and it is a
 setting, not a statistic.**
@@ -345,13 +441,17 @@ as a gate it suppresses everything. → Keep it as a **displayed caveat with the
 response rate**, not as a filter. Already the intent in A6; make sure the
 implementation cannot quietly drop findings.
 
-**8. Thematic coding of three sentences is not analysis.**
-At the demo's n = 3, an LLM summary of the open text strictly adds
-hallucination risk over showing the three sentences. → **Hard floor: no
-aggregate coding below `threshold_n` open texts.** Below it, the dashboard shows
-verbatims (privacy-gated) and nothing else. The demo will hit this floor —
-that is correct behaviour, and worth saying out loud in the pitch rather than
-faking depth.
+**8. Coding five sentences is not analysis, and the prototype is at five.**
+At n = 4–5, an LLM summary of the open text strictly adds hallucination risk
+over showing the sentences. Worse, at that size *every* aggregate is
+identifying: four people means a theme split is a name. → **Hard floor stands:
+no aggregate coding or segment split below `threshold_n`.** Below it the
+dashboard shows privacy-gated verbatims, counts out of n, and nothing else. The
+prototype sits on the wrong side of this floor by design — which makes it an
+honest test of the machinery, not a demo of insight. **Do not lower
+`threshold_n` to make the demo look fuller.** If the demo needs to show the
+insight layer, run it on seeded synthetic responses and label them as such on
+screen.
 
 **9. Seasonality will be your loudest fake insight.**
 Namber's own mail already names the pattern: werkdruk peaks around the
@@ -384,6 +484,21 @@ bug — and it silently poisons the data before any of this pipeline runs.
 → Render the invitation body **from the invite's frozen `question_ids`** before
 the first real round.
 
+**14. Live updating plus a visible answer feed is a de-anonymiser, and it is
+the feature you just asked for.**
+In a four-person round, watching the dashboard move when one person submits
+tells you what that person answered — you diff the before and after. The
+showcase feed is worse: a card appearing at 14:03 is attributable by anyone who
+knows who was at their desk. This is not a threshold problem that a higher `n`
+fixes; it is inherent to rendering a round *while it is open*. → Fine for an MVP
+whose respondents are the three people building it, and unusable as-is with real
+medewerkers. Two hard rules so the MVP does not become production by accident:
+**the mode switch above is explicit and on screen**, and in `productie` the
+dashboard renders nothing at all until the pulse is closed and `threshold_n` is
+met. If a live view is genuinely wanted in production later, the only honest
+version is a response *counter* — "4 van de 12 binnen" — with no scores, no
+texts and no insights until close.
+
 **13. Compliance is part of the pipeline, not a footnote.**
 Employee welzijn data leaving the EU through an OpenRouter provider you did not
 choose, for an employer whose own brand promise is *"een systeem werkt voor
@@ -394,7 +509,7 @@ chain written into the AVG register, and `labels` structurally unable to reach
 
 ---
 
-## 9. The plan, after the critique
+## 10. The plan, after the critique
 
 Phased, and reordered so the cheap high-leverage fixes land first.
 
@@ -411,23 +526,24 @@ classification, cold-start guard (#2), non-response caveat (#7). Unit tests on
 synthetic data, including "12 people, no real change" → must yield zero
 `signaal`.
 
-**Phase 2 — dashboard on Layer A alone**
+**Phase 2 — the live dashboard**
 Replace the audience list in `src/app/page.tsx` with: response rate first, n on
-every tile, distributions rather than means, trend line for anchor items only,
-`ruis` badges, verbatims below the threshold gate, and the beloofd/gedaan/effect
-block. **This is shippable and useful with no LLM in it at all** — and it is the
-honest fallback if the model layer ever has to be switched off.
+every tile, counts rather than percentages below threshold, distributions rather
+than means, `ruis` badges, and the beloofd/gedaan/effect block. Then the live
+half — the `binnengekomen` feed, 3 s polling on `/api/pulse/[id]/state`, and the
+version trail showing what each new answer changed. **The Layer A half is
+shippable and useful with no LLM in it at all** — and it is the honest fallback
+if the model layer ever has to be switched off. The mode switch (#14) ships in
+this phase, not later.
 
-**Phase 3 — Layer B, coding**
-`openrouter.ts` + coder + span validator + `np_llm_runs` + golden set (#10).
-Human-in-the-loop confirmation while the corpus is small (#3). Hard floor at
-`threshold_n` texts (#8).
+**Phase 3 — the two calls**
+`openrouter.ts`, the read call (both `flits` and `diepte` variants), the span
+validator, the insight call, the evidence validator, `np_llm_runs`, golden set
+(#10). Human confirmation of codes while the corpus is small (#3), hard floor at
+`threshold_n` (#8), cost cap, full audit trail. Writing the existing
+`np_insights` shape so the dashboard needs no change to adopt it.
 
-**Phase 4 — Layer C, insights**
-Synthesis + validator + critic, writing the existing `np_insights` shape so the
-dashboard needs no change to adopt it. Cost cap, full audit trail.
-
-**Phase 5 — hardening**
+**Phase 4 — hardening**
 Drift re-runs on model change, same-phase-last-cycle comparison, AVG register
 entry, lint rule blocking `labels` from the pipeline (#13).
 
