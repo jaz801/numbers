@@ -230,6 +230,9 @@ export function renderView(B: any) {
                     </select>
                     <button onClick={B.voegVraagToe} style={css("background:#00B0A8;color:#fff;border:none;border-radius:200px;padding:9px 18px;font-size:14px;font-weight:500;cursor:pointer")} className="hv1">Toevoegen</button>
                   </div>
+                  {B.heeftVraagMelding ? (
+                    <p style={css("font-size:12.5px;color:#8a8a8a;margin:10px 0 0;line-height:1.5")}>{B.vraagMelding}</p>
+                  ) : null}
                 </div>
               </div>
             </div>

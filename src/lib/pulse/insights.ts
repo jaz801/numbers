@@ -63,7 +63,7 @@ Harde regels:
 - Kort en zakelijk. Geen jargon, geen aanhalingstekens om losse woorden.`;
 
 /** Every numeral the model is allowed to use, as strings. */
-function allowedNumbers(stats: PulseStats): Set<string> {
+export function allowedNumbers(stats: PulseStats): Set<string> {
   const allowed = new Set<string>();
   const add = (value: number) => {
     allowed.add(String(value));
@@ -74,6 +74,17 @@ function allowedNumbers(stats: PulseStats): Set<string> {
   add(stats.responded);
   add(stats.answers);
   add(stats.thresholdN);
+  // Above the threshold the prompt stops insisting on counts, so the rates the
+  // dashboard itself shows have to be citable — otherwise a correct "67% gaf
+  // een 4 of 5" is thrown away as an invented figure.
+  if (!stats.belowThreshold) {
+    add(Math.round(stats.responseRate * 100));
+    for (const theme of stats.themes) {
+      if (!theme.answers) continue;
+      add(Math.round((theme.top2 / theme.answers) * 100));
+      add(Math.round((theme.bottom2 / theme.answers) * 100));
+    }
+  }
   for (const theme of stats.themes) {
     add(theme.answers);
     add(theme.top2);
@@ -85,6 +96,12 @@ function allowedNumbers(stats: PulseStats): Set<string> {
   return allowed;
 }
 
+/** Every figure in `text` that Layer A cannot account for. */
+export function unresolvedNumbers(text: string, stats: PulseStats): string[] {
+  const allowed = allowedNumbers(stats);
+  return (text.match(/\d+(?:[.,]\d+)?/g) ?? []).filter((numeral) => !allowed.has(numeral));
+}
+
 /**
  * Deterministic gate on the model's output.
  *
@@ -92,7 +109,7 @@ function allowedNumbers(stats: PulseStats): Set<string> {
  * a round that produced three good findings and one invented figure should
  * show three findings, not an error.
  */
-function validate(
+export function validate(
   items: InsightItem[],
   stats: PulseStats,
   ceiling: "laag" | "midden" | "hoog",
@@ -190,6 +207,13 @@ export async function generateInsights(state: RoundState): Promise<GenerateResul
 
   if (n === 0) return { version: null, cached: false, note: "Nog geen antwoorden binnen." };
 
+  // A submit writes its response row and its answers as two calls. Reading in
+  // that gap would cache "geen scores binnen" against this answer count, and
+  // the cache is keyed on exactly that count — so it would stick for good.
+  if (state.midWrite) {
+    return { version: null, cached: false, note: "Een antwoord is nog binnen aan het komen." };
+  }
+
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return {
@@ -227,7 +251,16 @@ export async function generateInsights(state: RoundState): Promise<GenerateResul
     state.kind === "diepte" ? 4 : 2,
   );
 
-  await logRun(state.pulseId, result.model, inputHash, true, errors, result);
+  // The summary sits at the top of the card, so it gets the same treatment as
+  // the evidence lines: a figure that cannot be resolved costs the sentence.
+  let summary = result.data.samenvatting ?? "";
+  const summaryProblems = unresolvedNumbers(summary, state.stats);
+  if (summaryProblems.length) {
+    errors.push(`onherleidbaar getal in de samenvatting: ${summaryProblems.join(", ")}`);
+    summary = "";
+  }
+
+  await logRun(state.pulseId, result.model, inputHash, errors.length === 0, errors, result);
 
   const [written] = await upsert<InsightVersion>(
     "np_insight_versions",
@@ -235,7 +268,7 @@ export async function generateInsights(state: RoundState): Promise<GenerateResul
       {
         pulse_id: state.pulseId,
         n_responses: n,
-        summary: result.data.samenvatting ?? "",
+        summary,
         insights: kept,
         model: result.model,
       },
@@ -249,7 +282,7 @@ export async function generateInsights(state: RoundState): Promise<GenerateResul
     [
       {
         pulse_id: state.pulseId,
-        summary: result.data.samenvatting ?? "",
+        summary,
         insights: kept,
         model: result.model,
         generated_at: new Date().toISOString(),
@@ -261,7 +294,7 @@ export async function generateInsights(state: RoundState): Promise<GenerateResul
   return {
     version: written ?? {
       n_responses: n,
-      summary: result.data.samenvatting ?? "",
+      summary,
       insights: kept,
       model: result.model,
       generated_at: new Date().toISOString(),

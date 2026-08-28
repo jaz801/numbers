@@ -170,3 +170,16 @@ export const LEEG_PX = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAA
 export function tokenize() { return Math.random().toString(36).slice(2, 8); }
 export function init(n: string) { return n.split(" ").filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join(""); }
 
+
+/**
+ * A row from np_questions as the portal wants it. The code is the id here:
+ * every score, chart and export in the portal is keyed on it.
+ */
+export function vraagVanRij(row: {
+  code: string;
+  theme: string;
+  text: string;
+  kind: string;
+}): Vraag {
+  return { id: row.code, t: row.theme, kern: row.kind === "kern", tekst: row.text };
+}

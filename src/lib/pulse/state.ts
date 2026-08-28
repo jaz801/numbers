@@ -36,6 +36,12 @@ export type InsightVersion = {
 
 export type RoundState = {
   pulseId: string;
+  /**
+   * True while a submit is mid-write: the response row exists but its answers
+   * do not. Reading a round in that gap would cache an insight for a number of
+   * answers that never really happened.
+   */
+  midWrite: boolean;
   label: string;
   kind: PulseKind;
   mode: "demo" | "productie";
@@ -51,8 +57,12 @@ type ResponseRow = { id: string; segment: MemberType; open_text: string | null; 
 type AnswerRow = { response_id: string; question_id: string; score: number };
 
 export async function loadState(pulseId: string): Promise<RoundState | null> {
+  // The id comes straight from the URL. Unencoded it could smuggle its own
+  // query parameters into a service-role request.
+  const id = encodeURIComponent(pulseId);
+
   const pulses = await sb<(Pulse & { kind: PulseKind })[]>(
-    `np_pulses?id=eq.${pulseId}&select=*&limit=1`,
+    `np_pulses?id=eq.${id}&select=*&limit=1`,
   );
   const pulse = pulses?.[0];
   if (!pulse) return null;
@@ -62,9 +72,9 @@ export async function loadState(pulseId: string): Promise<RoundState | null> {
   const mode = settings.mode === "productie" ? "productie" : "demo";
 
   const [invites, responses, questions] = await Promise.all([
-    sb<{ id: string }[]>(`np_invites?pulse_id=eq.${pulseId}&select=id`),
+    sb<{ id: string }[]>(`np_invites?pulse_id=eq.${id}&select=id`),
     sb<ResponseRow[]>(
-      `np_responses?pulse_id=eq.${pulseId}&select=id,segment,open_text,created_at&order=created_at.asc`,
+      `np_responses?pulse_id=eq.${id}&select=id,segment,open_text,created_at&order=created_at.asc`,
     ),
     sb<QuestionRow[]>("np_questions?select=id,code,theme,text"),
   ]);
@@ -108,12 +118,13 @@ export async function loadState(pulseId: string): Promise<RoundState | null> {
   }));
 
   const versions = await sb<InsightVersion[]>(
-    `np_insight_versions?pulse_id=eq.${pulseId}` +
+    `np_insight_versions?pulse_id=eq.${id}` +
       "&select=n_responses,summary,insights,model,generated_at&order=n_responses.desc",
   );
 
   return {
     pulseId,
+    midWrite: feed.some((item) => item.scores.length === 0),
     label: pulse.label,
     kind: pulse.kind === "diepte" ? "diepte" : "flits",
     mode,

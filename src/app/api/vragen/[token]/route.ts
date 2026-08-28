@@ -121,46 +121,75 @@ export async function POST(request: Request, { params }: Params) {
     const openText = (body.openText ?? "").trim().slice(0, 4000) || null;
     const segment: MemberType = found.invite.segment;
 
-    // Mark the invite first: a submit that writes answers and then fails to
-    // close the invite would let the same link answer twice.
-    await sb(`np_invites?id=eq.${found.invite.id}`, {
+    // Write the answers before touching the invite. Closing the invite first
+    // would mean a failed write costs the person their answers *and* their
+    // link: they would come back to "al ingevuld" with nothing stored.
+    //
+    // The insert also carries `invite_id`, whose unique index is the only
+    // atomic guard against a double submit — the `completed_at` check above is
+    // a read-then-write and a retried request can slip between the two.
+    let response: { id: string } | undefined;
+    try {
+      [response] = await insert<{ id: string }>("np_responses", [
+        {
+          pulse_id: found.pulse.id,
+          invite_id: found.invite.id,
+          segment,
+          open_text: openText,
+        },
+      ]);
+    } catch (error) {
+      // 409 from the store here means the unique index caught a second submit.
+      if (error instanceof SupabaseError && error.status === 409) {
+        return Response.json({ error: "Deze pulse is al ingevuld." }, { status: 409 });
+      }
+      throw error;
+    }
+    if (!response) throw new Error("Het antwoord kon niet worden opgeslagen.");
+
+    const written = response.id;
+    try {
+      await insert("np_answers", [
+        ...scores.map(([question_id, score]) => ({
+          response_id: written,
+          question_id,
+          score,
+        })),
+      ]);
+    } catch (error) {
+      // A response row without answers would count as a respondent for the rest
+      // of the round and shift every later version key. Take it back out.
+      await sb(`np_responses?id=eq.${encodeURIComponent(written)}`, { method: "DELETE" }).catch(
+        () => undefined,
+      );
+      throw error;
+    }
+
+    await sb(`np_invites?id=eq.${encodeURIComponent(found.invite.id)}`, {
       method: "PATCH",
       body: { completed_at: new Date().toISOString() },
     });
-
-    const [response] = await insert<{ id: string }>("np_responses", [
-      {
-        pulse_id: found.pulse.id,
-        invite_id: found.invite.id,
-        segment,
-        open_text: openText,
-      },
-    ]);
-    if (!response) throw new Error("Het antwoord kon niet worden opgeslagen.");
-
-    await insert("np_answers", [
-      ...scores.map(([question_id, score]) => ({
-        response_id: response.id,
-        question_id,
-        score,
-      })),
-    ]);
 
     // Anonymity, as the invitation promises it: cut the link to the person the
     // moment the answers are safely written. `segment` survives, so the
     // dashboard can still split intern/extern.
     const settings = (found.pulse.settings ?? {}) as Record<string, unknown>;
     if (settings.anonymous !== false) {
-      await sb(`np_responses?id=eq.${response.id}`, {
+      await sb(`np_responses?id=eq.${encodeURIComponent(written)}`, {
         method: "PATCH",
         body: { invite_id: null },
       });
     }
 
-    // Recompute now, so the dashboard has the new insight before the person
-    // has finished reading the thank-you screen.
-    const state = await loadState(found.pulse.id);
-    if (state) await generateInsightsOnce(state);
+    // Everything the person submitted is stored by now. Recomputing is a
+    // courtesy to the dashboard, so it may never turn a saved submission into
+    // an error on their screen — the poll picks it up either way.
+    try {
+      const state = await loadState(found.pulse.id);
+      if (state) await generateInsightsOnce(state);
+    } catch {
+      // Deliberately swallowed; see above.
+    }
 
     return Response.json({ ok: true, pulseId: found.pulse.id }, { status: 201 });
   } catch (error) {
