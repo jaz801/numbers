@@ -9,7 +9,7 @@
  * stored, so a shared laptop does not become a shared round.
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type Link = {
   person: string;
@@ -28,6 +28,25 @@ type Round = {
   links: Link[];
 };
 
+type ExistingLink = {
+  person: string;
+  email: string;
+  segment: "intern" | "extern";
+  url: string;
+  completedAt: string | null;
+};
+
+type ExistingRound = {
+  pulseId: string;
+  label: string;
+  kind: "flits" | "diepte";
+  status: "concept" | "verstuurd" | "gesloten";
+  createdAt: string;
+  dashboardUrl: string;
+  responseCount: number;
+  links: ExistingLink[];
+};
+
 const TEAL = "#00B0A8";
 const APRICOT = "#F5A46C";
 
@@ -40,6 +59,45 @@ export default function Beheer() {
   const [round, setRound] = useState<Round | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [shown, setShown] = useState<string | null>(null);
+  const [rounds, setRounds] = useState<ExistingRound[] | null>(null);
+  const [loadingRounds, setLoadingRounds] = useState(false);
+  const [roundsError, setRoundsError] = useState<string | null>(null);
+  const [openRound, setOpenRound] = useState<string | null>(null);
+
+  /**
+   * The links are the round: without them nobody can answer. So they are read
+   * back from the server every time a secret is on screen, instead of living
+   * only in the state of the tab that opened the round.
+   */
+  const loadRounds = useCallback(async (pulseSecret: string) => {
+    if (!pulseSecret) {
+      setRounds(null);
+      setRoundsError(null);
+      return;
+    }
+    setLoadingRounds(true);
+    try {
+      const response = await fetch("/api/rondes", {
+        headers: { "x-pulse-secret": pulseSecret },
+        cache: "no-store",
+      });
+      const body = (await response.json()) as { rounds?: ExistingRound[]; error?: string };
+      if (!response.ok) throw new Error(body.error ?? `Serverfout ${response.status}`);
+      setRounds(body.rounds ?? []);
+      setRoundsError(null);
+    } catch (problem) {
+      setRounds(null);
+      setRoundsError(problem instanceof Error ? problem.message : String(problem));
+    } finally {
+      setLoadingRounds(false);
+    }
+  }, []);
+
+  // Debounced, so typing the secret does not fire a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => void loadRounds(secret), 400);
+    return () => clearTimeout(timer);
+  }, [secret, loadRounds]);
 
   async function open() {
     setBusy(true);
@@ -53,6 +111,7 @@ export default function Beheer() {
       const body = (await response.json()) as Round & { error?: string };
       if (!response.ok) throw new Error(body.error ?? `Serverfout ${response.status}`);
       setRound(body);
+      void loadRounds(secret);
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : String(problem));
     } finally {
@@ -213,6 +272,131 @@ export default function Beheer() {
           </ul>
         </section>
       ) : null}
+
+      <section className="mt-10">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold">Bestaande rondes</h2>
+          <button
+            type="button"
+            onClick={() => void loadRounds(secret)}
+            disabled={!secret || loadingRounds}
+            className="rounded-full border border-black/15 px-3 py-1 text-xs disabled:opacity-40"
+          >
+            {loadingRounds ? "laden…" : "ververs"}
+          </button>
+        </div>
+        <p className="mt-1 text-sm text-black/60">
+          Links raak je hier niet meer kwijt. Vul je secret in en je krijgt ze allemaal
+          terug — inclusief wie al geantwoord heeft.
+        </p>
+
+        {!secret ? (
+          <p className="mt-3 text-sm text-black/50">Vul hierboven je pulse-secret in.</p>
+        ) : null}
+        {roundsError ? <p className="mt-3 text-sm text-red-700">{roundsError}</p> : null}
+        {secret && !roundsError && rounds?.length === 0 ? (
+          <p className="mt-3 text-sm text-black/50">Nog geen rondes geopend.</p>
+        ) : null}
+
+        <ul className="mt-4 space-y-3">
+          {(rounds ?? []).map((item) => {
+            const done = item.links.filter((link) => link.completedAt).length;
+            return (
+              <li key={item.pulseId} className="rounded-2xl border border-black/10 p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="font-medium">
+                    {item.label}{" "}
+                    <span className="text-xs font-normal text-black/50">
+                      {item.kind === "diepte" ? "diepte" : "flits"} · {item.status} ·{" "}
+                      {new Date(item.createdAt).toLocaleDateString("nl-NL", {
+                        day: "numeric",
+                        month: "long",
+                      })}
+                    </span>
+                  </p>
+                  <span className="text-xs text-black/60">
+                    {done}/{item.links.length} beantwoord · {item.responseCount}{" "}
+                    {item.responseCount === 1 ? "antwoord" : "antwoorden"}
+                  </span>
+                </div>
+
+                <div className="mt-2 flex items-center gap-2">
+                  <code className="flex-1 truncate rounded-lg bg-black/5 px-2 py-1 text-xs">
+                    {item.dashboardUrl}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copy(item.dashboardUrl, `dash-${item.pulseId}`)}
+                    className="rounded-full border border-black/15 px-3 py-1 text-xs"
+                  >
+                    {copied === `dash-${item.pulseId}` ? "gekopieerd" : "kopieer"}
+                  </button>
+                  <a
+                    href={item.dashboardUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-full px-3 py-1 text-xs font-medium text-white"
+                    style={{ background: TEAL }}
+                  >
+                    dashboard
+                  </a>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOpenRound((current) => (current === item.pulseId ? null : item.pulseId))
+                  }
+                  className="mt-3 text-xs underline decoration-dotted"
+                >
+                  {openRound === item.pulseId
+                    ? "verberg links"
+                    : `toon ${item.links.length} links`}
+                </button>
+
+                {openRound === item.pulseId ? (
+                  <ul className="mt-3 space-y-2">
+                    {item.links.map((link) => (
+                      <li key={link.url} className="rounded-xl bg-black/[0.03] p-3">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="text-sm font-medium">
+                            {link.person}{" "}
+                            <span className="text-xs font-normal text-black/50">
+                              {link.email} · {link.segment}
+                            </span>
+                          </p>
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                            style={
+                              link.completedAt
+                                ? { background: TEAL, color: "#fff" }
+                                : { background: APRICOT, color: "#fff" }
+                            }
+                          >
+                            {link.completedAt ? "heeft geantwoord" : "nog niet geantwoord"}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <code className="flex-1 truncate rounded-lg bg-black/5 px-2 py-1 text-xs">
+                            {link.url}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => copy(link.url, link.url)}
+                            className="rounded-full border border-black/15 bg-white px-3 py-1 text-xs"
+                          >
+                            {copied === link.url ? "gekopieerd" : "kopieer"}
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
     </main>
   );
 }
