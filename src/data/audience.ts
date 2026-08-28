@@ -15,6 +15,14 @@ export type AudienceMember = {
   firstName: string;
   /** Optional headshot in /public/avatars. Falls back to initials. */
   avatarUrl?: string;
+  /**
+   * Self-declared neurodiversity or support labels.
+   *
+   * Special-category data under GDPR art. 9, so it only ever holds what the
+   * person put here themselves. It is never inferred from answers and never
+   * goes into the insights prompt — the dashboard segments on intern/extern.
+   */
+  labels?: string[];
 };
 
 export const audience: AudienceMember[] = [
@@ -23,6 +31,7 @@ export const audience: AudienceMember[] = [
     name: "Jasper Ruijs",
     firstName: "Jasper",
     email: "jasper.ruys@gmail.com",
+    labels: ["autisme", "hoogbegaafd"],
   },
   {
     id: "kian",

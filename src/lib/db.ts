@@ -19,6 +19,13 @@ export type Person = {
   member_type: MemberType;
   /** Headshot as a data URL, downscaled to 200x200 before upload. */
   avatar: string | null;
+  /**
+   * Self-declared neurodiversity or support labels.
+   *
+   * Special-category data under GDPR art. 9: only what the person put here
+   * themselves, never inferred from answers, never sent to the insights route.
+   */
+  labels: string[];
   active: boolean;
   created_at: string;
 };
