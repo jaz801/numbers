@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "pulse:test": "node --experimental-strip-types scripts/send-pulse-test.ts",
+    "pulse:preview": "node --experimental-strip-types scripts/send-pulse-test.ts --dry-run"
   },
   "dependencies": {
     "next": "16.3.3",
