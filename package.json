@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --experimental-strip-types --import ./src/lib/pulse/__tests__/alias-hook.ts --test src/lib/pulse/__tests__/*.test.ts",
     "pulse:test": "node --experimental-strip-types scripts/send-pulse-test.ts",
     "pulse:preview": "node --experimental-strip-types scripts/send-pulse-test.ts --dry-run"
   },

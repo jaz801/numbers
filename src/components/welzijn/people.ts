@@ -1,4 +1,5 @@
 import { audience } from "@/data/audience";
+import { segmentVan } from "@/data/segments";
 import { contextVanLabels } from "@/lib/np/context";
 import type { Person } from "@/lib/db";
 import { AVATARS } from "./avatars";
@@ -17,16 +18,6 @@ export type Persoon = {
 };
 
 /**
- * Intern or extern per person. Not part of the audience record itself — it is
- * a property of this pulse, not of the person.
- */
-const SEGMENT_PER_LID: Record<string, "intern" | "extern"> = {
-  jasper: "intern",
-  joep: "intern",
-  kian: "extern",
-};
-
-/**
  * The demo audience as the portal wants it. Ids stay p1/p2/p3 because the
  * example history and the seeded answers in the demo hang off them.
  */
@@ -34,7 +25,7 @@ export const DEMO_PEOPLE: Persoon[] = audience.map((member, i) => ({
   id: "p" + (i + 1),
   naam: member.name,
   email: member.email,
-  type: SEGMENT_PER_LID[member.id] ?? "intern",
+  type: segmentVan(member.id),
   foto: AVATARS[member.id] ?? member.avatarUrl ?? null,
   context: contextVanLabels(member.labels),
 }));
