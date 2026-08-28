@@ -1,3 +1,23 @@
+# Numbers — Welzijn Portaal
+
+Een welzijnspulse voor Namber: korte vragenrondes, per persoon willekeurig
+getrokken, met een dashboard dat live meebeweegt terwijl de antwoorden
+binnenkomen.
+
+| Route | Wat het is |
+|---|---|
+| `/` | Het portaal (demo van de inrichting) |
+| `/beheer` | Ronde openen en de links kopiëren — je stuurt ze zelf |
+| `/vragen/[token]` | De vragen van één deelnemer, 5 of 12, willekeurig getrokken |
+| `/live/[pulse]` | Het dashboard, ververst elke drie seconden |
+
+Zie [`docs/live-rondes.md`](docs/live-rondes.md) voor de volledige route en
+[`docs/data-pipeline-plan.md`](docs/data-pipeline-plan.md) voor hoe antwoorden
+cijfers en inzichten worden — inclusief waar deze versie daar bewust van
+afwijkt. Omgevingsvariabelen staan in `.env.example`.
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

@@ -1,4 +1,5 @@
 import { audience, type AudienceMember } from "@/data/audience";
+import { segmentVan } from "@/data/segments";
 import { AVATARS } from "./avatars";
 
 export type Persoon = {
@@ -26,16 +27,6 @@ const CONTEXT_PER_LABEL: Record<string, string> = {
   bipolair: "bipolair",
 };
 
-/**
- * Intern or extern per person. Not part of the audience record itself — it is
- * a property of this pulse, not of the person.
- */
-const SEGMENT_PER_LID: Record<string, "intern" | "extern"> = {
-  jasper: "intern",
-  joep: "intern",
-  kian: "extern",
-};
-
 function contextVan(member: AudienceMember): string {
   for (const label of member.labels ?? []) {
     const context = CONTEXT_PER_LABEL[label];
@@ -52,7 +43,7 @@ export const DEMO_PEOPLE: Persoon[] = audience.map((member, i) => ({
   id: "p" + (i + 1),
   naam: member.name,
   email: member.email,
-  type: SEGMENT_PER_LID[member.id] ?? "intern",
+  type: segmentVan(member.id),
   foto: AVATARS[member.id] ?? member.avatarUrl ?? null,
   context: contextVan(member),
 }));
